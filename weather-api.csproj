@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
-    <RootNamespace>Weather_API</RootNamespace>
+    <RootNamespace>weather-api</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
