@@ -1,0 +1,162 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  buildConfiguration: 'Release'
+  appName: 'weather-api'
+  artifactLocation: 'app'
+  swaggerFileLocation: 'specs'
+
+stages:
+- stage: CI
+  displayName: Continuous Integration
+  jobs:
+  - job: Build
+    steps:
+    
+    - powershell: |
+        Write-Host "This is from power shell command task"
+        Write-Host "This writes out the env vars"
+        get-childitem -path env:*
+      displayName: 'PowerShell script to write out env vars'
+  
+    - task: UseDotNet@2
+      displayName: 'Use .NET Core sdk'
+      inputs:
+        packageType: sdk
+        version: 6.0.x
+        includePreviewVersions: true 
+   
+    
+    - task: NuGetToolInstaller@1
+      displayName: 'NugetTool Installer'
+      inputs:
+        versionSpec: '6.x'
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '16'
+        checkLatest: true
+    - task: Npm@1
+      inputs:
+        command: 'custom'
+        workingDir: '$(Build.ArtifactStagingDirectory)'
+        customCommand: 'install @openapitools/openapi-generator-cli -g'
+    - task: CmdLine@2
+      displayName: 'Open API version checking'
+      inputs:
+        script: |
+          openapi-generator-cli version
+          openapi-generator-cli version-manager set 5.4.0
+          install openapitools/openapi-generator-cli -D
+          # openapi-generator-cli generate -g csharp-netcore --additional-properties=prependFormOrBodyParameters=true -o out -i swagger.json
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore Tools'
+      inputs:
+        command: 'custom'
+        custom: 'tool'
+        arguments: 'restore --tool-manifest .config/dotnet-tools.json'
+
+   
+    - task: DotNetCoreCLI@2
+      displayName: 'Build API'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration)'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish API'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration $(buildConfiguration) --no-restore --output $(Build.ArtifactStagingDirectory)/$(artifactLocation)'
+        zipAfterPublish: false
+        modifyOutputPath: false
+        
+    - task: CmdLine@2
+      displayName: Create specs directory
+      inputs:
+        script: 'mkdir $(Build.ArtifactStagingDirectory)\$(swaggerFileLocation)'
+    
+    - task: DotNetCoreCLI@2
+      displayName: 'Generate OpenAPI spec document'
+      inputs:
+        command: custom
+        custom: swagger
+        # arguments: 'tofile --output $(Build.ArtifactStagingDirectory)/${swaggerFileLocation}/$(appName).v1.json $(Build.ArtifactStagingDirectory)/app/$(appName)/$(appName).dll v1' 
+        arguments: 'tofile --output $(Build.ArtifactStagingDirectory)\$(swaggerFileLocation)\$(appName).v1.json $(Build.ArtifactStagingDirectory)\$(artifactLocation)\$(appName).dll v1'
+   
+    - task: JavaToolInstaller@0
+      inputs:
+        versionSpec: '8'
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+
+    - task: CmdLine@2
+      inputs:
+        script: 'openapi-generator-cli generate -g csharp-netcore --additional-properties=prependFormOrBodyParameters=true,targetFramework=net6.0,packageName=Mewurk.Hrms.CompanyMicroservice.Client.Sdk -o out -i swagger.json'
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+    - task: CmdLine@2
+      inputs:
+        script: |
+          echo Checking the build artifactstaging directory
+          dir $(Build.SourcesDirectory)\out\
+          dir $(Build.SourcesDirectory)\out\src\Mewurk.Hrms.CompanyMicroservice.Client.Sdk\
+          dir $(Build.SourcesDirectory)\out\src\Mewurk.Hrms.CompanyMicroservice.Client.Sdk\obj\
+          echo 'Executing rmdir for obj...'
+          rmdir /S /Q $(Build.SourcesDirectory)\out\src\Mewurk.Hrms.CompanyMicroservice.Client.Sdk\obj
+          dir $(Build.SourcesDirectory)\out\src\Mewurk.Hrms.CompanyMicroservice.Client.Sdk\
+    - task: DotNetCoreCLI@2
+      displayName: 'Build '
+      inputs:
+        command: 'build'
+        projects: '$(Build.SourcesDirectory)\out\src\Mewurk.Hrms.CompanyMicroservice.Client.Sdk\**/*.csproj'
+        arguments: '--configuration $(buildConfiguration)'
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          echo Checking the build artifactstaging directory
+          dir $(Build.SourcesDirectory)\out\src\Mewurk.Hrms.CompanyMicroservice.Client.Sdk\bin\Release\net6.0
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)\out\src\Mewurk.Hrms.CompanyMicroservice.Client.Sdk\bin\Release\net6.0\'
+        Contents: 'Mewurk.Hrms.CompanyMicroservice.Client.Sdk.dll'
+        TargetFolder: '$(build.artifactstagingdirectory)\specs\'
+   
+    - task: UniversalPackages@0
+      inputs:
+        command: 'publish'
+        publishDirectory: '$(Build.ArtifactStagingDirectory)/specs/'
+        feedsToUsePublish: 'internal'
+        vstsFeedPublish: 'af765c80-4767-4ddd-b2a7-5163690cf076/a6383ace-db65-4c5e-9a7c-106a87104c44'
+        vstsFeedPackagePublish: 'mewurk.hrms.companymicroservice.client.sdk'
+        versionOption: 'major'
+        packagePublishDescription: 'Publishing the Package to azure artifacts'
+  
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/specs/'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+        
+    
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'dotnetwebapiSC'
+        repository: 'dotnet'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
